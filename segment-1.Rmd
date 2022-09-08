@@ -1,0 +1,449 @@
+---
+title: |
+  | KU Leuven Summer School   
+  | Segment 1   
+  | Jumping into Bayes 
+author: Paul Gustafson
+date: September 15, 2022
+output: 
+  beamer_presentation:
+    keep_tex: false
+    includes:
+      in_header: header_pagenrs.tex
+
+---
+
+```{r, echo=F}
+### global reproducibility
+set.seed(1234)
+### sane output
+options(digits=3)
+options(width=65)
+```
+
+# Example story
+
+Going to be getting some patient-level data: 
+
+* take standard ($X=0$) or new ($X=1$) drug;
+
+* symptoms improve ($Y=1$) or not ($Y=0$).
+
+Define $p_{x}=Pr(Y=1|X=x)$, $x=0,1$.
+
+In advance of receiving data, experts feels that $p_{x}<0.05$ is unlikely,
+as is $p_{x}> 0.33$, for both $x=0$ and $x=1$.
+
+This expert knowledge is encoded in a **prior distribution**:
+
+$p_{0},p_{1} \stackrel{\mbox{iid}}{\sim} \mbox{beta}(a,b)$.
+
+```{r}
+### declare our hyperparameter specification
+hyp <- list(a=3, b=15)
+
+### and confirm this specification is fit-for-purpose
+qbeta(c(.05,.95),hyp$a, hyp$b)
+```
+
+# Arrival of the data
+
+\footnotesize
+```{r, echo=F}
+dat <- data.frame(x=sample(c(rep(0,23),rep(1,14))), y=rep(NA,23+14))
+dat$y[dat$x==0] <- sample(c(rep(1,1),rep(0, sum(dat$x==0)-1)))
+dat$y[dat$x==1] <- sample(c(rep(1,5),rep(0, sum(dat$x==1)-5)))
+```
+
+```{r}
+dim(dat)
+    
+head(dat)
+
+table(dat)
+```
+\normalsize
+
+# Statistical model for data given parameters
+
+Sufficient statistics $S_{j} = \sum_{i:x_{i}=j}y_{i}$, $j=0,1$.
+
+$S_{j} \sim Bin(n_{j} ,p_{j})$, independently for $j=0,1$.
+
+\footnotesize
+```{r}
+n <- as.vector(table(dat$x))
+s.dat <- c(sum(dat$y[dat$x==0]), sum(dat$y[dat$x==1]))
+```
+```{r}
+n
+s.dat
+```
+\normalsize
+
+Scalar parameter of most interest:
+
+$\psi = \mbox{logit}(p_1)- \mbox{logit}(p_0)$
+
+
+# Generative model
+
+The amalgamation of the prior distribution and the statistical model can be referred to as the *generative model*.
+
+* A completely specified *joint* dist. for data and parameters.
+
+* May feel weird, since from the investigator's perspective parameters are **fixed but unknown**, not **random**.  Need to remember: prior distribution is being used to describe **investigator knowledge** about these fixed but unknown quantities.
+
+* Perhaps helpful heuristic:  `Mother Nature' uses the generative model to generate both the state of the world and the ensuing data.   But she keeps the former private, only shares the data with the investigator.
+
+
+# Posterior distribution
+
+Describes investigator's knowledge about the state of the world after Nature has shared the data.
+
+$$ f(p|s) = \frac{f(s|p)f(p)}{f(s)}$$
+$$ \propto f(s|p)f(p)$$
+
+
+
+# The Holy Grail of Bayesian Statistics
+
+```{r, out.width = "100px", fig.align="center", echo=F}
+knitr::include_graphics("FIGS/grail.JPG")
+```
+
+# Determining the posterior distribution - in a literal, brute-force manner
+
+```{r, cache=T}
+### represent the posterior via m MC realizations
+m <- 20000; opt.brute <- matrix(NA, m, 2)
+colnames(opt.brute) <- c("p0","p1")
+
+have <- 0
+while (have < m) {
+  
+  ### simulate from generative model
+  p.0.sim <- rbeta(1, hyp$a, hyp$b)
+  p.1.sim <- rbeta(1, hyp$a, hyp$b)
+  s.sim <- c(rbinom(1, size=n[1], prob=p.0.sim),
+             rbinom(1, size=n[2], prob=p.1.sim))
+             
+  ### only keep if the simulated data matches observed 
+  if (all(s.sim==s.dat)) {
+    have <- have + 1
+    opt.brute[have,] <- c(p.0.sim, p.1.sim)
+  }
+}
+```
+
+# Prior and posterior distributions of $(p_{0},p_{1})$
+
+```{r, echo=F}
+par(mfrow=c(1,2))
+plot(rbeta(200, hyp$a, hyp$b), rbeta(200, hyp$a, hyp$b),
+     xlim=c(0,0.5),ylim=c(0,0.5),
+     xlab=expression(p[0]), ylab=expression(p[1]))
+title("Prior")
+
+plot(opt.brute[1:200,"p0"], opt.brute[1:200,"p1"],
+     xlim=c(0,0.5), ylim=c(0,0.5),
+     xlab=expression(p[0]), ylab=expression(p[1]))
+title("Posterior")
+```
+
+# Estimate the target
+```{r, echo=F}
+logit <- function(p) { log(p)-log(1-p)}
+opt.brute <- cbind(opt.brute,
+"psi"=logit(opt.brute[,"p1"])-logit(opt.brute[,"p0"]))
+```
+
+```{r, echo=F}
+par(mfrow=c(1,2))
+hist(logit(rbeta(m,hyp$a,hyp$b))-logit(rbeta(m,hyp$a,hyp$b)),
+     prob=T, main="Prior", xlab=expression(psi),
+     xlim=c(-4,4), ylim=c(0,0.6))
+hist(opt.brute[,"psi"],prob=T, xlab=expression(psi), main="Posterior", xlim=c(-4,4), ylim=c(0,0.6))
+```
+
+# Do some inference
+
+A point estimate, $E(\psi|\mbox{Data})$:
+
+```{r}
+mean(opt.brute[,"psi"])
+```
+
+A "standard error" $SD(\psi | \mbox{Data})$:
+
+```{r}
+sqrt(var(opt.brute[,"psi"]))
+```
+
+
+A 95\% interval estimate:
+
+```{r}
+quantile(opt.brute[,"psi"], c(0.025, 0.975))
+```
+
+# Nuance: Statistical error versus numerical / Monte Carlo error
+
+$SD(\psi|\mbox{Data})$ is a `standard-error-like' quantification of how well the sample quantity $E(\psi|\mbox{Data})$ estimates the population parameter $\psi$.
+
+That said, carefully distinguish the roles of: 
+
+```{r}
+sqrt(var(opt.brute[,"psi"]))
+```
+
+$\vspace{0.75in}$
+
+```{r}
+sqrt(var(opt.brute[,"psi"])/m)
+```
+
+$\vspace{1.in}$
+
+
+
+# Answer by package - JAGS
+
+```{r, message=F, warning=F}
+
+
+genmod.JAGS <- "model{
+  
+  ### prior distribution
+  p0 ~ dbeta(a,b)
+  p1 ~ dbeta(a,b)
+  
+  ### statistical model
+  s0 ~ dbinom(p0, n0)
+  s1 ~ dbinom(p1, n1)
+
+  ### and for conveience, store the target param also 
+  psi <- logit(p1)-logit(p0)
+}"
+```
+
+
+# Answer by JAGS, continued
+
+```{r, warning=F, message=F}
+require(rjags)
+```
+
+```{r message=FALSE, warning=FALSE, cache=T, results="hide"}
+### generative model, data go in
+mod <- jags.model(textConnection(genmod.JAGS),
+                  data=list(s0=s.dat[1], n0=n[1],
+                            s1=s.dat[2], n1=n[2],
+                            a=hyp$a, b=hyp$b),
+                  n.chains=4)
+
+### bit of burn-in
+update(mod,2000)
+
+###  MC output comes out
+opt.JAGS <- coda.samples(mod, 
+                 variable.names=c("psi"), 
+                 n.iter=10000)
+```
+
+# Can we find our friendly neighbourhood estimates in the package output?
+
+\footnotesize
+```{r}
+summary(opt.JAGS)
+```
+\normalsize
+
+# FYI, lots of output options
+```{r, warning=F, message=F}
+require(MCMCvis)
+MCMCsummary(opt.JAGS)
+```
+
+
+# ASIDE: off-the-shelf **non-Bayesian** analysis of these data?
+
+```{r}
+### ML estimate of psi
+logit(s.dat[2]/n[2]) - logit(s.dat[1]/n[1])
+```
+
+\footnotesize
+```{r}
+### standard error
+sqrt(sum(1/c(s.dat[1], n[1]-s.dat[1], s.dat[2], n[2]-s.dat[2])))
+```
+\normalsize
+
+```{r,eval=F}
+### or if you prefer, get these from...
+glm(y~x, family=binomial)
+```
+Can speculate on **two** reasons why our present Bayesian answer is not so close to this
+
+
+# Black-box package actually overkill for problem we just did
+
+Our problem has **conjugate** structure, ergo a clean math description of the posterior dist. for $(p_{0},p_{1}|S_{0},S_{1})$:
+
+$(p_{j}|S=s) \sim \mbox{beta}(a+s_{j}, b+(n_{j}-s_{j}))$, independently for $j=0,1$.
+
+
+# So yet another route to our inference
+
+```{r, cache=T}
+opt.MC <-cbind(
+  "p0"=rbeta(m, hyp$a+s.dat[1], hyp$b+n[1]-s.dat[1]),
+  "p1"=rbeta(m, hyp$a+s.dat[2], hyp$b+n[2]-s.dat[2]))
+
+opt.MC <- cbind(opt.MC,
+  "psi"=logit(opt.MC[,"p1"])-logit(opt.MC[,"p0"]))
+```
+
+```{r}
+## posterior mean and SD of target
+c(mean(opt.MC[,"psi"]), sqrt(var(opt.MC[,"psi"])))
+
+### quality of numerical approximation
+sqrt(var(opt.MC[,"psi"])/m)
+```
+
+# In fact, for problem at hand, can skip MC approximation, compute exactly
+
+\tiny
+```{r}
+### posterior mean of psi
+(digamma(hyp$a+s.dat[2])-digamma(hyp$b+n[2]-s.dat[2])) -
+(digamma(hyp$a+s.dat[1]) - digamma(hyp$b+n[1]-s.dat[1]))
+```
+\normalsize
+
+\vspace{.25in}
+
+\tiny
+```{r}
+### posterior SD of psi
+sqrt(trigamma(hyp$a+s.dat[2]) + trigamma(hyp$b+n[2]-s.dat[2]) +
+     trigamma(hyp$a+s.dat[1]) + trigamma(hyp$b+n[1]-s.dat[1]))
+```
+\normalsize
+
+# Back to the holy grail
+
+What *might* a platinum grail spit out?
+
+\vspace{.1in}
+
+What *might* a golden grail spit out?
+
+\vspace{.1in}
+
+What *might* a silver grail spit out?
+
+\vspace{.1in}
+
+What **does** a bronze grail spit out?
+
+\vspace{2.in}
+
+
+
+# Taxonomy of the computing options we've seen today
+
+```{r,echo=F, message=F}
+require(data.tree)
+
+tmp <- Node$new("seek posterior\nquantities")
+
+  jdgm <- tmp$AddChild("just *declare*\nthe GM")
+
+    brtf <- jdgm$AddChild("brute force")
+  
+    pckg <- jdgm$AddChild("MCMC package")
+  
+      jags <- pckg$AddChild("JAGS")
+      stan <- pckg$AddChild("STAN")
+      blng <- pckg$AddChild("BLANG")
+      oth <- pckg$AddChild("...")
+
+  dsm <-  tmp$AddChild("do some math for\n *this* GM")
+
+    drws <- dsm$AddChild("MC draws")
+    xct <- dsm$AddChild("exact\nintegration")
+```
+
+```{r, eval=F, echo=F}
+### have to do manually, won't knit properly :-(
+plot(tmp)
+```
+```{r, out.width = "240px", fig.align="center", echo=F}
+knitr::include_graphics("FIGS/Rplot01.jpeg")
+```
+\vspace{2.in}
+
+
+# Since we are typically stuck with a bronze grail (i.e., MCMC) ... 
+
+* Users can/should exert control over how much computing to do.
+
+* Users can/should monitor how successful this computing is.
+
+# APPENDIX: Could you stand to see one more computational route to the same end?
+
+```{r}
+genmod.STAN <- "
+data {
+  int<lower=0> n[2];
+  int<lower=0> s[2];
+  real<lower=0> a[2];
+  real<lower=0> b[2];
+}
+parameters {
+  real<lower=0,upper=1> p[2];
+}
+transformed parameters {
+  real psi;
+  psi =logit(p[2])-logit(p[1]);
+}
+model {
+  p ~ beta(a,b);
+  s ~ binomial(n,p);
+}
+
+"
+```
+# STAN, continued
+
+```{r, message=F, warning=F}
+require("rstan"); rstan_options(auto_write = TRUE)
+```
+
+```{r, message=F, warning=F,  results='hide', cache=T}
+opt.STAN <- stan(model_code=genmod.STAN, 
+  data=list(s=s.dat, n=n, a=rep(hyp$a,2), b=rep(hyp$b,2)),
+  iter=12000)
+```
+
+# STAN, continued
+
+```{r}
+summary(opt.STAN)$summary
+```
+
+# Due diligence: Two different black-boxes give same answer?
+
+```{r, warning=F, message=F}
+MCMCsummary(opt.STAN)
+
+MCMCsummary(opt.JAGS)
+```
+
+
+
+
+

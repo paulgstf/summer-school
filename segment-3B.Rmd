@@ -1,0 +1,204 @@
+---
+title: |
+  | KU Leuven Summer School   
+  | Segment 3B
+  | More Misclassification Models 
+author: Paul Gustafson
+date: September 15, 2022 
+output: 
+  beamer_presentation:
+    keep_tex: true
+    includes:
+      in_header: header_pagenrs.tex
+urlcolor: blue
+---
+
+```{r, echo=F}
+### global reproducibility
+set.seed(1234)
+### sane output
+options(digits=3)
+options(width=65)
+```
+
+```{r, echo=F, message=F, warning=F}
+require(rjags)
+require(MCMCvis)
+```
+
+```{r, echo=F}
+logit <- function(p) { log(p)-log(1-p) }
+expit <- function(z) { 1/(1+exp(-z)) }
+```
+
+
+
+# Start with a mystery dataset
+
+Case-control again, but:
+
+* Nobody has a measurement of true exposure $X$
+
+* Everbody has a pair of measurements from two **different** surrogates (for $X$), $X^{*}_{1}$, $X^{*}_{2}$
+
+E.g., think $X_1^{*}$ $\sim$ self-report, $X^{*}_{2}$ $\sim$ imperfect lab test
+
+```{r, echo=F}
+### mystery data
+n <- 5000
+
+### balanced case-control study
+y <- sample(c(rep(0, n/2), rep(1, n/2)))
+
+### true OR of 2
+gamma.0.TR <- 0.1
+gamma.1.TR <- expit(logit(gamma.0.TR)+log(2))
+
+x <- rbinom(n, size=1, prob=(1-y)*gamma.0.TR + y*gamma.1.TR)
+
+### two independent surrogates
+xstr1 <- rbinom(n, size=1, prob=(1-x)*(1-0.85)+x*(0.75))
+xstr2 <- rbinom(n, size=1, prob=(1-x)*(1-0.95)+x*(0.60))
+
+### Mother Nature WITHHOLDS the actual x
+rm(x)
+
+dta <- data.frame(xstr1=xstr1, xstr2=xstr2, y=y)
+```
+
+```{r}
+head(dta)
+```
+# Mystery dataset, continued 
+
+```{r}
+table(dta)
+```
+
+# Some simple analyses
+
+
+```{r}
+summary(glm(y~xstr1, family=binomial))$coef
+summary(glm(y~xstr2, family=binomial))$coef
+```
+
+# Generative model
+
+$f(\mbox{params})$
+$\prod_{i=1}^{n}$
+${\color{gray}f(y_i)}$
+$f(x_i|y_i)$
+$f(x^{*}_1, x^{*}_2|x_i,{\color{gray}y_i})$
+
+\vspace{2.in}
+
+
+# This will run (but ess/wall-time unpleasant)
+
+```{r}
+genmod.string <- "model{
+  
+### prior distribution
+gamma.0 ~ dunif(0,1)
+gamma.1 ~ dunif(0,1)
+sn1 ~ dunif(0.5, 1)
+sp1 ~ dunif(0.5, 1)
+sn2 ~ dunif(0.5, 1)
+sp2 ~ dunif(0.5, 1)
+
+trgt <- logit(gamma.1)-logit(gamma.0)
+
+for (i in 1:n) {
+  x[i] ~ dbern((1-y[i])*gamma.0+y[i]*gamma.1)
+  xstr1[i] ~ dbern((1-x[i])*(1-sp1)+x[i]*sn1)
+  xstr2[i] ~ dbern((1-x[i])*(1-sp2)+x[i]*sn2)
+}  
+
+}" 
+```
+
+# Instead consider
+
+```{r}
+genmod.string <- "model {
+gamma.0 ~ dunif(0,1); gamma.1 ~ dunif(0,1)
+trg <- logit(gamma.1)-logit(gamma.0)
+sn1 ~ dunif(0.5,1); sp1 ~ dunif(0.5,1)
+sn2 ~ dunif(0.5,1); sp2 ~ dunif(0.5,1)
+
+### controls: dist(xstr1, xstr2 |y=0)
+q.0[1] <- (1-gamma.0)*sp1*sp2 + gamma.0*(1-sn1)*(1-sn2)
+q.0[2] <- (1-gamma.0)*(1-sp1)*sp2 + gamma.0*(sn1)*(1-sn2)
+q.0[3] <- (1-gamma.0)*sp1*(1-sp2) + gamma.0*(1-sn1)*sn2
+q.0[4] <- (1-gamma.0)*(1-sp1)*(1-sp2) + gamma.0*sn1*sn2
+dat.0 ~ dmulti(q.0[], n.0)
+
+### cases: dist(xstr1, xstr2 |y=1)
+q.1[1] <- (1-gamma.1)*sp1*sp2 + gamma.1*(1-sn1)*(1-sn2)
+q.1[2] <- (1-gamma.1)*(1-sp1)*sp2 + gamma.1*(sn1)*(1-sn2)
+q.1[3] <- (1-gamma.1)*sp1*(1-sp2) + gamma.1*(1-sn1)*sn2
+q.1[4] <- (1-gamma.1)*(1-sp1)*(1-sp2) + gamma.1*sn1*sn2
+dat.1 ~ dmulti(q.1[], n.1)
+}"
+```
+
+# Pause: what's going on here?
+
+# Turn the crank
+
+```{r, cache=F,message=F, warning=F, results='hide'}
+### generative model, data go in
+mod <- jags.model(textConnection(genmod.string),
+  data=list(dat.0=as.vector(table(dta)[,,1]), 
+            n.0=sum(table(dta)[,,1]),
+            dat.1=as.vector(table(dta)[,,2]), 
+            n.1=sum(table(dta)[,,2])),
+  n.chains=3)
+
+update(mod,2000) #burn-in
+
+### MCMC output comes out
+opt.JAGS <- coda.samples(mod, n.iter=60000, thin=10, 
+  variable.names=c("gamma.0","gamma.1","sn1","sp1",
+                   "sn2","sp2","trg"))
+```
+
+# Inference
+
+```{r}
+MCMCsummary(opt.JAGS)
+```
+
+# Inference, continued
+
+```{r}
+MCMCplot(opt.JAGS)
+```
+
+# And a grand reveal
+
+# Pause to marvel for a moment: Asked a lot of these data, and they delivered
+
+# An aside on parameter-counting (1 of 2)
+
+\vspace{3.in}
+
+
+Relevant ref: [Hui \& Walter (1980, Biom.)](https://doi.org/10.2307/2530508)
+
+
+
+# An aside on parameter-counting (2 of 2)
+
+\vspace{3.in}
+
+Relevant ref: [Johnson \& Hanson (2005, Stat. Sci., comment)](https://doi.org/10.1214/088342305000000098)
+
+# Pause some more: Lunch is never *completely* free 
+
+# And yet another sense in which lunch isn't free
+
+
+
+

@@ -1,0 +1,351 @@
+---
+title: |
+  | KU Leuven Summer School   
+  | Segment 2B  
+  | More Missing Data 
+author: Paul Gustafson
+date: September 15, 2022
+output: 
+  beamer_presentation:
+    includes:
+      in_header: header_pagenrs.tex
+---
+
+```{r, echo=F}
+### global reproducibility
+set.seed(1234)
+### sane output
+options(digits=3)
+options(width=65)
+```
+
+```{r, echo=F}
+expit <- function(z) {1/(1+exp(-z))}
+n <- 1000
+x1 <- rbinom(n, size=1, prob=.4)
+x2 <- rbinom(n, size=1, prob=.2 + .5*x1)
+y <-  rbinom(n, size=1, 
+             prob=expit(cbind(1,x1,x2) %*% 
+                        c(-1, 0.2, 0.6)))
+
+         
+### MCAR
+r <- rbinom(n, size=1, prob=0.4)
+x2.obs <- rep(NA, n); x2.obs[r==1] <- x2[r==1]
+dat1 <- data.frame(x1=x1, x2=x2.obs, y=y)
+
+### MAR
+r <- rbinom(n, size=1, prob=0.55-.3*x1*y)
+x2.obs <- rep(NA, n); x2.obs[r==1] <- x2[r==1]
+dat2 <- data.frame(x1=x1, x2=x2.obs, y=y)
+
+### nonignorable
+r <- rbinom(n, size=1, prob=1-.75*x2*y)
+x2.obs <- rep(NA, n); x2.obs[r==1] <- x2[r==1]
+dat3 <- data.frame(x1=x1, x2=x2.obs, y=y)
+```
+
+
+# Stylized context (very similar to Segment 2A)
+
+$X_1$: Binary indicator of high blood pressure (1=Yes)
+
+$X_2$: Binary indicator of regular exercise (1=No)
+
+$Y$: Binary indicator of heart disease (1=Yes)
+
+Statistical model:
+
+$\mbox{logit}\{Pr(Y=1|X_1,X_2)\} = 
+\beta_{0} + \beta_{1}X_1 + \beta_{2}X_2$
+
+
+# But there is a "disturbance in the force:"
+
+*  Obtain $(X_1,Y)$ for **all** $n$ study subjects from electronic health records.
+
+* Obtain $X_2$ for **only some** study subjects from survey, turns out to have a low response rate.
+
+
+# First (mystery) dataset
+
+
+```{r}
+summary(dat1)
+```
+
+
+# First dataset, continued
+
+```{r}
+table(dat1, exclude=NULL)
+```
+
+```{r, echo=F, eval=F}
+tbl1 <- table(dat1, exclude=NULL)
+margin.table(tbl1, c(1,2))
+prop.table(tbl1, c(1,2))
+```
+
+# Second (mystery) dataset
+
+```{r}
+table(dat2, exclude=NULL)
+```
+
+# Third (mystery) dataset
+
+```{r}
+table(dat3, exclude=NULL)
+```
+
+
+
+# Answer by package - JAGS
+
+```{r, echo=F, message=F, warning=F}
+require(rjags)
+```
+```{r}
+genmod.string <- "model{
+  
+  ### prior distribution
+  alpha0 ~ dnorm(0, 0.1)
+  alpha1 ~ dnorm(0, 0.1)
+   beta0 ~ dnorm(0, 0.1)
+   beta1 ~ dnorm(0, 0.1)
+   beta2 ~ dnorm(0, 0.1)
+
+  ### statistical model
+  for (i in 1:n) {
+    x2[i] ~ dbern(pr.x2[i])
+    logit(pr.x2[i]) <- alpha0 + alpha1*x1[i]
+
+    y[i] ~ dbern(pr.y[i])
+    logit(pr.y[i]) <- beta0 + beta1*x1[i] + beta2*x2[i]
+  }
+
+}"
+```
+# Pause to comment on this prior and stat model specification
+
+# JAGS, continued
+
+```{r, message=F, warning=F, results="hide", cache=T}
+
+### generative model, data go in
+mod <- jags.model(textConnection(genmod.string),
+         data=list(x1=dat1$x1, x2=dat1$x2, y=dat1$y,                                  n=dim(dat1)[1]), 
+         n.chains=4)
+
+update(mod, 2000) # burn-in
+
+###  MC output comes out
+opt1.JAGS <- coda.samples(mod, n.iter=10000,
+  variable.names=c("alpha0","alpha1","beta0","beta1",
+    "beta2","x2[7]","x2[8]")) 
+```
+
+# JAGS, continued
+
+```{r}
+summary(opt1.JAGS)
+```
+
+# And for comparison: complete-case analysis
+
+```{r}
+cmplt <- !is.na(dat1$x2)
+cmplt[1:8]
+```
+
+```{r, message=F, warning=F, results="hide",cache=T}
+
+mod <- jags.model(textConnection(genmod.string),
+  data=list(x1=dat1$x1[cmplt], 
+            x2=dat1$x2[cmplt], 
+            y=dat1$y[cmplt],                                                          n=sum(cmplt)), n.chains=4)
+
+opt1.cc.JAGS <- coda.samples(mod, 
+                 variable.names=c("beta0","beta1","beta2"), 
+                 n.iter=10000)
+```
+
+
+# Comparison:  Dataset 1, complete-case versus latent
+
+
+
+```{r, echo=F, warning=F, message=F}
+require(MCMCvis)
+```
+
+```{r}
+MCMCplot(opt1.cc.JAGS, opt1.JAGS,
+  params=c("beta0","beta1","beta2"))
+```
+
+
+# Same comparison, but for Dataset 2
+
+```{r, echo=F, message=F, warning=F, results="hide", cache=T}
+mod <- jags.model(textConnection(genmod.string),
+                  data=list(x1=dat2$x1, x2=dat2$x2, y=dat2$y,                                            n=dim(dat2)[1]),
+                  n.chains=5)
+
+
+                  ###  MC output comes out
+
+opt2.JAGS <- coda.samples(mod, n.iter=10000,                  variable.names=c("beta0","beta1","beta2")) 
+
+cmplt <- !is.na(dat2$x2)
+
+mod <- jags.model(textConnection(genmod.string),
+  data=list(x1=dat2$x1[cmplt], 
+            x2=dat2$x2[cmplt], 
+            y=dat2$y[cmplt],                                              n=sum(cmplt)),
+  n.chains=5)
+
+opt2.cc.JAGS <- coda.samples(mod, 
+                 variable.names=c("beta0","beta1","beta2"), 
+                 n.iter=10000)
+```
+
+
+```{r, echo=F}
+MCMCplot(opt2.cc.JAGS, opt2.JAGS)
+```
+
+# Same comparison, but for Dataset 3
+
+```{r, echo=F, message=F, warning=F, results="hide", cache=T}
+mod <- jags.model(textConnection(genmod.string),
+                  data=list(x1=dat3$x1, x2=dat3$x2, y=dat3$y,                                            n=dim(dat3)[1]),
+                  n.chains=5)
+
+
+                  ###  MC output comes out
+
+opt3.JAGS <- coda.samples(mod, n.iter=10000,                  variable.names=c("beta0","beta1","beta2")) 
+
+cmplt <- !is.na(dat3$x2)
+
+mod <- jags.model(textConnection(genmod.string),
+  data=list(x1=dat3$x1[cmplt], 
+            x2=dat3$x2[cmplt], 
+            y=dat3$y[cmplt],                                              n=sum(cmplt)),
+  n.chains=5)
+
+opt3.cc.JAGS <- coda.samples(mod, 
+                 variable.names=c("beta0","beta1","beta2"), 
+                 n.iter=10000)
+```
+
+```{r, echo=F}
+MCMCplot(opt3.cc.JAGS, opt3.JAGS)
+```
+
+# So what have we actually done here? (thinking space 1)
+
+
+#  Let's think harder about how missing values became that way
+
+Let $R$ by a binary indicator, taking the value $1$ if $X_{2}$ is observed,
+$0$ if it's missing.
+
+Need to think about the distribution of $(X_{1},X_{2},Y,R)$.
+
+And concede that in fact for a given patient we will observe an event which has one of these two forms:
+
+* $(X_1=x_1, X_2=x_2, Y=y, R=1)$ 
+
+* $(X_1=x_1, Y=y, R=0)$
+
+Aside to think about: Sometimes this would be written as 
+$(X_{1},Y,R,X_{2}R)$ are the observable variables.
+
+# In generality, think of this generative model
+
+\begin{eqnarray*}
+f(\alpha,\beta,x_{1},x_{2},y,r) & = &
+f(\alpha,\beta) 
+\alert{f(x_1)}
+f(x_{2}|x_{1},\alpha) \;\times \\
+& & f(y|x_{1},x_{2},\beta) \alert{f(r|x_1,x_2,y)}.
+\end{eqnarray*}
+
+\vspace{1.2in}
+
+* Have made *conditional independence* assumptions here.
+
+* With \alert{terms in red}, think if our answer depends on them, then we will have to know their forms.
+
+# Applying Bayes theorem to this generative model gets us to 
+
+\begin{eqnarray*}
+f\left(\alpha,\beta,x_{2}^{(mis)} | x_{1}, x_{2}^{(obs)}, y, r\right) 
+& \propto &
+f(\alpha,\beta) f(x_{2}|x_{1}) f(y|x_{1},x_{2}) \; \times \\
+& & \alert{f(r|x_{1},x_{2},y)}
+\end{eqnarray*}
+
+(and again, think hard about the meaning of $\propto$ here)
+
+So we have a hall-pass to stick with the  analysis above so long as...
+
+\vspace{2.in}
+
+#  **Ignorable** missingess
+
+In words, chance of missingess 
+
+\vspace{.2in}
+
+on the underlying value that may/may not be obscured.
+
+Two related things to ponder.   In situations where we *aren't* comfortable making this assumption:
+
+* Could we include a further unknown parameter (say $\lambda$) in the generative model and keep/augment the $f(r|x_1,x_2,y,\lambda)$ term?
+
+* Can the data empirically provide evidence for/against the assumption?
+
+#  Now for a grand reveal concerning the three mystery datasets
+
+\begin{eqnarray*}
+\mbox{logit}\{Pr(Y=1|X_1,X_2)\} &=&
+\hspace{.5in} + \hspace{.5in}X_{1} \hspace{.5in}X_{2}
+\end{eqnarray*}
+
+\vspace{3.in}
+
+# Dataset 1
+
+$Pr(R=1|X_1,X_2,Y) =$
+\vspace{3.in}
+
+# Dataset 2
+
+$Pr(R=1|X_1,X_2,Y) =$
+\vspace{3.in}
+
+
+# Dataset 3
+
+$Pr(R=1|X_1,X_2,Y) =$
+\vspace{3.in}
+
+# And then a final thought to come back to
+
+If we don't feel comfortable assuming ignorable missingness, why not just work with
+
+$f(\alpha,\beta,\lambda)f(x_{1})f(x_{2}|x_{1},\alpha)
+f(y|x_{1},x_{2},\beta)f(r|x_{1},x_{2},y,\lambda)$
+
+
+
+\vspace{2.in}
+
+# Thought, continued
+
+
+

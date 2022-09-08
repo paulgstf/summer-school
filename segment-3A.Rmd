@@ -1,0 +1,267 @@
+---
+title: |
+  | KU Leuven Summer School   
+  | Segment 3A
+  | Misclassification 
+author: Paul Gustafson
+date: September 15, 2022
+output: 
+  beamer_presentation:
+    keep_tex: false
+    includes:
+      in_header: header_pagenrs.tex
+---
+
+```{r, echo=F}
+### global reproducibility
+set.seed(1234)
+### sane output
+options(digits=3)
+options(width=65)
+```
+
+```{r, echo=F}
+### cervix data
+dta <- rbind(
+  matrix(rep(c(1,0,0),13), byrow=T, ncol=3),
+  matrix(rep(c(1,0,1),3), byrow=T, ncol=3),
+  matrix(rep(c(1,1,0),5), byrow=T, ncol=3),
+  matrix(rep(c(1,1,1),18), byrow=T, ncol=3),
+  matrix(rep(c(0,0,0),33), byrow=T, ncol=3),
+  matrix(rep(c(0,0,1),11), byrow=T, ncol=3),
+  matrix(rep(c(0,1,0),16), byrow=T, ncol=3),
+  matrix(rep(c(0,1,1),16), byrow=T, ncol=3),
+  matrix(rep(c(1,NA,0),318), byrow=T, ncol=3),
+  matrix(rep(c(1,NA,1),375), byrow=T, ncol=3),
+  matrix(rep(c(0,NA,0),701), byrow=T, ncol=3),
+  matrix(rep(c(0,NA,1),535), byrow=T, ncol=3))        
+
+colnames(dta) <- c("y","x","xstr")
+
+dta <- as.data.frame(dta)
+```
+
+# A **case-control** study of association between herpes simplex virus and cervical cancer
+
+Women with invasive cervical cancer ($Y=1$) versus healthy controls ($Y=0$).
+
+Explanatory variable is presence of HSV ($X=1$) versus not ($X=0$).
+
+But, a lab test to definitively determine $X$ for a study participant is very expensive.
+
+A lab test (`western blot') that is less definitive is much cheaper.
+Let $X^{*}$ be the result of this test.
+
+
+# The data
+```{r}
+dim(dta)
+```
+Have $(X^{*},Y)$ for all patients:
+
+```{r}
+table(dta[,"y"],dta[,"xstr"], dnn=c("y","xstr"))
+```
+
+But distinguish the unvalidated and validated sub-samples
+
+```{r}
+unv <- is.na(dta[,"x"])
+vld <- !unv
+
+c(sum(unv),sum(vld))
+```
+# Unvalidated 
+
+```{r}
+table(dta[unv,"y"],dta[unv,"xstr"], dnn=c("y","xstr"))
+```
+
+# Validated
+
+```{r}
+table(dta[vld,"x"],dta[vld,"xstr"],dta[vld,"y"],
+      dnn=c("x","xstr","y"))
+```
+
+#  Pause, what inference might we draw if we go the simple/naive route
+
+Say the validation exercise had not been carried out, and we weren't aware that western-blot lab assay was error-prone.
+
+```{r}
+summary(glm(y~xstr, family=binomial, data=dta))$coef
+```
+
+\vspace{1.in}
+Technical note: could have determined point-estimate and SE direct from 2 by 2 table.   Logistic regression is overkill here.
+
+# Or another extreme: Only willing to work with $X$, treat all $X^{*}$ measures as worthless
+
+```{r}
+summary(glm(y~x, family=binomial, subset=vld, data=dta))$coef
+```
+
+# The Bayesian, latent variable approach 
+
+Let's build a generative model:
+
+$f(\gamma_0,\gamma_1,Sn, Sp)$
+$\prod_{i=1}^{n}$ 
+${\color{gray}f(y_i)}$ 
+$f(x_i|y_i, \gamma_0,\gamma_1)$
+$f(x^{*}_i|x_i,{\color{gray}y_i},Sn,Sp)$
+
+
+\vspace{3.in}
+
+## Pause: Missing at Random assumption here?  Interpretation?
+
+
+##
+```{r}
+genmod.string <- "model{
+  
+  ### prior distribution
+  gamma.0 ~ dunif(0,1)
+  gamma.1 ~ dunif(0,1)
+  sens ~ dunif(0.5, 1)
+  spec ~ dunif(0.5, 1)
+
+  trgt <- logit(gamma.1)-logit(gamma.0)
+
+  ### statistical model
+  for (i in 1:n) {
+    x[i] ~ dbern(pr.x[i])
+    pr.x[i] <- (1-y[i])*gamma.0 + y[i]*gamma.1
+       
+    xstr[i] ~ dbern(pr.xstr[i])
+    pr.xstr[i] <- (1-x[i])*(1-spec) + x[i]*sens
+  }  
+}"
+```
+
+```{r, echo=F, message=F, warning=F}
+require(rjags)
+require(MCMCvis)
+```
+
+#
+
+```{r, message=F, warning=F, results="hide", cache=T}
+
+### generative model, data go in
+mod <- jags.model(textConnection(genmod.string),
+  data=list(x=dta$x, y=dta$y, xstr=dta$xstr,       
+    n=dim(dta)[1]),                            
+  n.chains=3)
+
+update(mod, 2000)  ### burn-in
+
+###  MC output comes out
+opt.JAGS <- coda.samples(mod, n.iter=10000, thin=1, 
+  variable.names=c("gamma.0","gamma.1","sens","spec","trgt")) 
+```
+
+# Our answer
+
+```{r}
+MCMCsummary(opt.JAGS)
+```
+
+# Computationally frustrating (ess / wall-time) - Collapse?
+
+E.g., for the validated controls:
+
+\vspace{2.in}
+
+And for the unvalidated controls:
+
+#
+
+```{r}
+genmod.clps.string <- "model{
+  ### prior distribution
+  gamma.0 ~ dunif(0,1)
+  gamma.1 ~ dunif(0,1)
+  sens ~ dunif(0.5, 1)
+  spec ~ dunif(0.5, 1)
+
+  s.0 ~ dbin(gamma.0, nv.0)
+  t.00 ~ dbin(1-spec, nv.0-s.0)
+  t.01 ~ dbin(sens, s.0)
+  
+  s.1 ~ dbin(gamma.1, nv.1)
+  t.10 ~ dbin(1-spec, nv.1-s.1)
+  t.11 ~ dbin(sens, s.1)
+  
+  du.0 ~ dbinom(pr.0, nu.0)
+  pr.0 <- (1-gamma.0)*(1-spec) + gamma.0*sens
+  
+  u.1 ~ dbinom(pr.1, nu.1)
+  pr.1 <- (1-gamma.1)*(1-spec) + gamma.1*sens
+  
+  trgt <- logit(gamma.1)-logit(gamma.0)
+}"
+```
+
+#
+
+```{r, message=F, warning=F, results="hide", cache=T}
+
+### generative model, data go in
+mod.clps <- jags.model(textConnection(genmod.clps.string),
+  data=list(u.0=535, nu.0=535+701,
+            u.1=375, nu.1=375+318,
+            s.0=16+16, nv.0=16+16+33+11,
+            t.00=11,t.01=16,
+            s.1=5+18, nv.1=5+18+13+3,
+            t.10=3, t.11=18),
+  n.chains=3)
+
+update(mod, 2000) ### burn-in
+
+###  MC output comes out
+opt.clps.JAGS <- coda.samples(mod.clps, n.iter=10000, thin=1, 
+  variable.names=c("gamma.0","gamma.1","sens","spec","trgt")) 
+```
+
+#
+
+```{r}
+MCMCsummary(opt.clps.JAGS)
+```
+
+# Sanity check: Two computational approaches going after **the** posterior distribution
+
+```{r}
+MCMCplot(opt.JAGS, opt.clps.JAGS)
+```
+
+# Putting the inference in context
+
+Have estimated the log oddd-ratio describing the $(X,Y)$ association 
+to be 
+`r round(summary(opt.clps.JAGS)$statistics["trgt","Mean"], 2)`
+\alert{(posterior mean)}, 
+with an uncertainty estimate
+`r round(summary(opt.clps.JAGS)$statistics["trgt","SD"], 2)`
+\alert{(posterior SD)}.
+
+* Contrast to complete-case analysis?
+
+\vspace{1.in}
+
+* Contrast to pretending $X^*$ is the gold-standard?
+
+
+# Many things that could be followed up on here
+
+* Generality of idea:  How to make the best use of $(X^{*},Y)$ data when the relationship between $X$ and $Y$ is of interest.
+
+* Computation: Tradeoff in collapsing.
+
+* Assumptions to be considered: we have invoked 
+$(X^{*} \perp Y |X)$. 
+
+* Study design: If you were given a budget, how would you trade-off total number of patients versus number validated?
+

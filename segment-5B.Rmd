@@ -1,0 +1,238 @@
+---
+title: |
+  | KU Leuven Summer School   
+  | Segment 5B  
+  | Information Flow in the IFR Inference Problem 
+author: Paul Gustafson
+date: September 16, 2022
+output: 
+  beamer_presentation:
+    includes:
+      in_header: header_pagenrs.tex
+---
+
+```{r, echo=F}
+### global reproducibility
+set.seed(1234)
+### sane output
+options(digits=3)
+options(width=65)
+```
+
+#  Consider a different/hypothetical pandemic (in code)
+
+There are K=10 jurisdictions.  Unbeknownst to us, here is the truth:
+
+```{r}
+### infection fatality rate 
+### known to be constant across jurisditions, but value unknown
+
+ifr <- 0.025 
+
+### actual infection rates, again unknown
+
+ir <- c(0.2, 0.1, 0.6, 0.5, 0.3, 0.35, 0.2, 0.1, 0.5, 0.45)
+
+### actual extents of preferential testing
+
+phi <- c(8, 2, 3, 3, 4, 7, 6, 2, 3, 7)
+```
+
+# What does nature reveal to us?
+
+```{r}
+### death rate
+dr.obs <- ir*ifr
+dr.obs
+
+### test positivity rate
+tp.obs <- 1-(1-ir)^phi
+tp.obs
+
+### and ensure no cheating!
+rm(ir, ifr, phi)
+```
+
+# And what else do we have going for us?
+
+We have a valid bound for all the preferential testing parameters
+
+```{r}
+phi.int <- c(1,10)
+```
+# So what do individual jurisdictions tell us about the IFR
+
+```{r}
+### e.g., jurisdiction 5 tells us that IFR must lie in 
+dr.obs[5] / ( 1 - (1-tp.obs[5])^(1/phi.int) )
+```
+```{r}
+### do for all jurisdictions
+ifr.bnd.lo <- dr.obs / ( 1 - (1-tp.obs)^(1/phi.int[1]) )
+ifr.bnd.hi <- dr.obs / ( 1 - (1-tp.obs)^(1/phi.int[2]) )
+```
+
+# Visualize how well we have squeezed in on our target
+
+```{r, echo=F}
+plot(-1,-1, xlim=c(0,11),ylim=c(0,0.15))
+
+rect(1, max(ifr.bnd.lo), 10, min(ifr.bnd.hi),
+     col="green",border=NA)
+
+for (i in 1:10) {
+  points(rep(i,2),c(ifr.bnd.lo[i], ifr.bnd.hi[i]), type="l")
+}
+```
+
+
+
+# Have learned that the IFR lies in
+
+```{r}
+round(c(max(ifr.bnd.lo), min(ifr.bnd.hi)),3)
+```
+# But getting back to Bayes
+
+The above proof-of-concept takes place in asymptotia, no explict Bayes inference.
+
+So now back to Bayes, but for demonstration, want/need a simpler sandbox than the full COVID example
+
+# Generative Model
+
+prior $f(\mu_a) f(\sigma_a) f(\mu_b) f (\sigma_b) f(\omega)$
+
+\begin{eqnarray*}
+(a_1,\ldots a_k| \mu_a, \sigma^2_a) & \stackrel{iid}{\sim} & N(\mu_a, \sigma^2_a)\\
+(b_1,\ldots b_k| \mu_b, \sigma^2_b) & \stackrel{iid}{\sim} & N(\mu_b, \sigma^2_b)\\
+(c_1, \ldots c_k) & \stackrel{iid}{\sim} & U(0, \omega)
+\end{eqnarray*}
+
+\begin{eqnarray*}
+\log(D_k/P_k) & \sim & N(a_k+b_k,  \nu_i^2)\\
+\log(CC_k/T_k) & \sim & N(b_k + c_k, \kappa_i^{2}) 
+\end{eqnarray*}
+
+# Code this up
+
+```{r}
+genmod.string <- "
+model {
+
+  mn.a ~ dnorm(0, 0.01)
+  sd.a ~ dbeta(1,19) ### limited ifr variation
+  prc.a <- pow(sd.a,-2)
+  
+  mn.b ~ dnorm(0, 0.01)
+  sd.b ~ dunif(0,1) ### not very limited ir variation
+  prc.b <- pow(sd.b,-2)
+  
+  for (i in 1:k) {
+    a[i] ~ dnorm(mn.a, prc.a)
+    b[i] ~ dnorm(mn.b, prc.b)
+    c[i] ~ dunif(0,2) ### effect of preferential testing
+    
+    log.dth.rate[i] ~ dnorm(a[i] + b[i], prc.dth[i])
+    log.tps.rate[i] ~ dnorm(b[i] + c[i], prc.tps[i])
+  }    
+}"
+```
+
+
+# First test dataset
+
+```{r}
+k <- 30
+
+set.seed(13)
+a.true <- rnorm(k, log(0.04), log(1.005))
+b.true <- rnorm(k,  log(0.35), log(1.15))
+c.true <- runif(k, 0,2)
+
+prc.dth <- rep(100000*(0.02/0.98), k) ### ???
+prc.tps <- rep(1000*(0.5/0.5), k)     ### ??? 
+
+log.dth.rate <- rnorm(k, a.true+b.true, 1/sqrt(prc.dth))
+log.tps.rate <- rnorm(k, b.true+c.true, 1/sqrt(prc.tps))
+```
+
+# Take a look
+
+```{r}
+head(cbind(log.dth.rate, sqrt(1/prc.dth), 
+           log.tps.rate, sqrt(1/prc.tps)))
+```
+
+```{r, echo=F, message=F, warning=F}
+require(rjags)
+require(MCMCvis)
+```
+
+# Turn the crank
+
+```{r, message=F, warning=F, results="hide", cache=T}
+### generative model, data go in
+mod <- jags.model(
+  textConnection(genmod.string),
+  data=list(log.dth.rate=log.dth.rate, prc.dth=prc.dth,
+            log.tps.rate=log.tps.rate, prc.tps=prc.tps, k=k),
+  n.chains=5)
+
+update(mod, 2500) # burn-in
+
+###  MC output comes out
+opt.JAGS <- coda.samples(mod, n.iter=500000, thin=100,
+  variable.names=c("mn.a","a[1]","b[1]","c[1]")) 
+```
+
+# Get an answer
+
+```{r}
+MCMCsummary(opt.JAGS)
+```
+
+# Second test dataset
+
+```{r}
+k <- 30
+
+set.seed(13)
+a.true <- rnorm(k, log(0.04), log(1.005))
+b.true <- rnorm(k,  log(0.35), log(1.05))
+c.true <- runif(k, 0.4,1.6)
+
+prc.dth <- rep(100000*(0.02/0.98), k) ### ???
+prc.tps <- rep(1000*(0.5/0.5), k)     ### ??? 
+
+log.dth.rate <- rnorm(k, a.true+b.true, 1/sqrt(prc.dth))
+log.tps.rate <- rnorm(k, b.true+c.true, 1/sqrt(prc.tps))
+```
+
+# Turn the crank
+
+```{r, message=F, warning=F, results="hide", cache=T}
+### generative model, data go in
+mod <- jags.model(
+  textConnection(genmod.string),
+  data=list(log.dth.rate=log.dth.rate, prc.dth=prc.dth,
+            log.tps.rate=log.tps.rate, prc.tps=prc.tps, k=k),
+  n.chains=5)
+
+update(mod, 2500) # burn-in
+
+###  MC output comes out
+opt.JAGS <- coda.samples(mod, n.iter=500000, thin=100,
+  variable.names=c("mn.a","a[1]","b[1]","c[1]")) 
+```
+
+# Get an answer
+
+```{r}
+MCMCsummary(opt.JAGS)
+```
+
+# Our pesky folk theorem rears its inconvenient head again!
+
+# Thoughts?
+
+

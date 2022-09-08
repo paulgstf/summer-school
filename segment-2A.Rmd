@@ -1,0 +1,199 @@
+---
+title: |
+  | KU Leuven Summer School   
+  | Segment 2A  
+  | First Look at Latents - Missing Data
+author: Paul Gustafson
+date: September 15, 2022
+output: 
+  beamer_presentation:
+    includes:
+      in_header: header_pagenrs.tex
+---
+
+```{r, echo=F}
+### global reproducibility
+set.seed(1234)
+### sane output
+options(digits=3)
+options(width=65)
+```
+
+# Missing data
+
+```{r, message=F}
+require(mice) ### just want data ex. from this package   
+```
+
+```{r}
+summary(nhanes2)
+```
+
+Say interested in regressing *chl* ($Y$) on *age* ($X_1$), *hyp* ($X_2$), and *bmi* ($X_3$).
+
+# Toward a generative model (1 of 3)
+
+$f(\theta)$ 
+$\prod_{i=1}^{n}$
+${\color{gray} f(x_{1i}|\theta)}$
+$f(x_{2i}|x_{1i},\theta)$
+$f(x_{3i}|x_{1i},x_{2i},\theta)$
+$f(y_i| x_{1i},x_{2i},x_{3i},\theta)$
+
+\vspace{2.5in}
+
+
+
+# Toward a generative model (2 of 3)
+
+
+```{r}
+statmod.string <-" 
+  for (i in 1:n) {
+    x2[i] ~ dbern(pr.x2[i])
+      logit(pr.x2[i]) <- alpha0 + alpha1a*x1a[i] +
+                         alpha1b*x1b[i]
+    
+    x3[i] ~ dnorm(mn.x3[i], prec.x3)
+      mn.x3[i] <- kappa0 + kappa1a*x1a[i] +
+                  kappa1b*x1b[i]+kappa2*x2[i]
+
+    y[i] ~ dnorm(mn.y[i], prec.y)
+      mn.y[i] <- beta0 + beta1a*x1a[i] + beta1b*x1b[i] + 
+                 beta2*x2[i] + beta3*x3[i]
+  }
+"
+```
+
+# Toward generative model (3 of 3)
+
+```{r}
+prior.string <- "
+  alpha0 ~ dnorm(0, 0.1)
+  alpha1a ~ dnorm(0, 0.1)
+  alpha1b ~ dnorm(0, 0.1)
+  
+  kappa0 ~ dnorm(0, 0.01)
+  kappa1a ~ dnorm(0, 0.01)
+  kappa1b ~ dnorm(0, 0.01)
+  kappa2 ~ dnorm(0, 0.01)
+  prec.x3 ~ dgamma(0.1, 0.1)
+  
+  beta0 ~ dnorm(0, 0.01)
+  beta1a ~ dnorm(0, 0.01)
+  beta1b ~ dnorm(0, 0.01)
+  beta2 ~ dnorm(0, 0.01)
+  beta3 ~ dnorm(0, 0.01)
+  prec.y ~ dgamma(0.5, 0.5)
+  sig.y <- sqrt(1/prec.y)
+"
+```
+
+# Housekeeping
+
+```{r}
+genmod.string <- paste(
+"model {",prior.string, statmod.string,"}")
+```
+
+# Pause to comment on this prior and stat model specification
+
+*Almost* have supplied a joint distribution of everything
+
+\vspace{4.in}
+
+
+# Turn the JAGS crank
+
+```{r, echo=F, message=F}
+require(rjags)
+```
+
+```{r, message=F, results="hide"}
+### generative model, data go in
+mod <- jags.model(textConnection(genmod.string),
+         data=list(x1a=as.numeric(nhanes2$age=="40-59"),
+                   x1b=as.numeric(nhanes2$age=="60-99"),
+                    x2=as.numeric(nhanes2$hyp)-1,
+                    x3=nhanes2$bmi,
+                     y=nhanes2$chl,
+                     n=dim(nhanes2)[1]), 
+         n.chains=4)
+
+update(mod, 2000)   ### burn-in
+
+###  MC output comes out
+opt1.JAGS <- coda.samples(mod, n.iter=10000,
+  variable.names=c("beta1a","beta1b","beta2","beta3","sig.y",
+    "x2[6]","x3[6]","y[6]")) 
+```
+
+# JAGS, continued
+
+```{r}
+summary(opt1.JAGS)
+```
+
+# Or
+```{r, message=F}
+require(MCMCvis)
+MCMCsummary(opt1.JAGS)
+```
+
+# Some due diligence on our computational work
+
+```{r}
+MCMCtrace(opt1.JAGS, params=c("beta3","sig.y"), pdf=F)
+```          
+
+
+# Thoughts: Under-the-hood, exactly what distribution are the Monte Carlo draws (approximately) coming from?
+
+# Thoughts: Hall-pass that freed me from having a model for $X_1$?
+
+Or did I have a "hall pass" to cheat a little?
+
+Under the hood JAGS produced Monte Carlo draws 
+from joint?   What about from marginal instead?
+
+# Thoughts: In concept at least could I have done the computing in the "collapsed" frame of reference?
+
+$f(\theta) \prod_{i=i}^n f(observed_i|\theta)$
+
+\vspace{2.in}
+
+# Collapsed, for instance:
+
+```{r}
+nhanes2[c(3,6),]
+```
+
+\vspace{2.in}
+
+
+# Collapsed versus Augmented: Two different strategies **for computing the same thing**
+
+Collapsed:
+\begin{eqnarray*}
+f(\theta|\mbox{observed})  & \propto & f(\mbox{observed}|\theta) f(\theta)
+\end{eqnarray*}
+
+\vspace{2.in}
+
+Augmented: 
+\begin{eqnarray*}
+f(\theta|\mbox{observed}) = \int f(\theta,\mbox{latent}|\mbox{observed}) d\mbox{latent}
+\end{eqnarray*}
+
+
+# Any more thoughts?
+
+
+
+
+
+
+
+
+
+

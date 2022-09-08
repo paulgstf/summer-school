@@ -1,0 +1,491 @@
+---
+title: |
+  | KU Leuven Summer School   
+  | Segment 6  
+  | Bayesian Calibration 
+author: Paul Gustafson
+date: September 16, 2022
+output: 
+  beamer_presentation:
+    keep_tex: false
+    includes:
+      in_header: header_pagenrs.tex
+---
+
+
+```{r, echo=F}
+### global reproducibility
+set.seed(1234)
+### sane output
+options(digits=3)
+options(width=65)
+```
+
+
+# Need a simple sandbox to play in 
+
+A stripped-down misclassification problem.
+
+Interested in the prevalance, $r$, of a disease in a population.   
+
+The diagnostic test for the condition is known to have perfect *specificity*, i.e., no false positives.  
+
+But there is ambiguity about the *sensitivity*, i.e., could be some false negatives.
+
+The diagnostic test is applied to a random sample of $n$ individuals from the target population.
+
+# Generative model (collapsed version)
+
+*  $r \sim \mbox{Unif}(0,1)$
+
+*  $Sn \sim \mbox{Beta}(a,b)$
+
+*  $(Y^{*}|r,Sn) \sim \mbox{Bin}(n, r \times Sn)$
+
+And let's make things quite focussed: 
+
+Inputs:
+
+* Dataset $(Y^{*},n)$
+
+* Expert opinion (hyperparameters) $(a,b)$
+
+Output:
+
+* (general) posterior distribution of $(r,Sn)$
+
+* (specific) 80\% equal-tailed credible interval for $r$
+
+
+```{r, echo=F}
+rbeta.trnc <- function(m, lwr, a, b) {
+  qbeta(  runif(m, pbeta(lwr,a, b), 1), a,b)
+}
+```
+
+```{r,echo=F, warning=F, message=F}
+require(modi)
+```
+
+```{r, echo=F}
+cred.int <- function(ystr, n, hyp, m=10000, cr.lev=0.8) {
+
+  rstr <- rbeta(m, 1+ystr, 1+(n-ystr))
+  
+  sn <- rbeta.trnc(m, rstr, hyp$a-1, hyp$b)
+  
+  r <- rstr/sn
+  
+  impwht <- 1-pbeta(rstr, hyp$a-1, hyp$b)
+  impwht <- m*impwht/sum(impwht)  
+  
+  c(weighted.quantile(r, impwht, (1-cr.lev)/2),
+    weighted.quantile(r, impwht, (1+cr.lev)/2))
+}  
+```
+
+```{r, echo=F}
+full.pst <- function(ystr, n, hyp, m=10000) {
+
+  ### draws from approx posterior in (rstr, sn) parameterization          
+  rstr <- rbeta(m, 1+ystr, 1+(n-ystr))
+  sn <- rbeta.trnc(m, rstr, hyp$a-1, hyp$b)
+  
+  ### importance weights to correct for approximation
+  impwht <- 1-pbeta(rstr, hyp$a-1, hyp$b)
+  impwht <- m*impwht/sum(impwht)  
+  
+  ### back to (r, sn) parameterization
+  r <- rstr/sn
+  
+  # resample according to the weights, 
+  # to get MC representation of actual posterior
+  tmp <- sample(1:m, replace=T, prob=impwht)
+  list(r=r[tmp], sn=sn[tmp])
+}  
+```
+
+# Computational implementation
+
+Would be easy to implement in JAGS.
+
+But nice to have something **faster,** and less beholden to **diagnostics**, to support **simulation studies**.
+
+Turns out this is a **nearly conjugate** situation
+
+*  possible to do *iid* Monte Carlo draws from a decent approximation to the posterior distribution
+
+*  possible to correct for the approximation error via **importance weights** that *do not depend on the data*
+
+See the appendix for bespoke code, if interested.
+
+# Example
+
+Say the data are $(Y^{*},n)$ = (60,100).
+
+Say the investigator believes that the diagnostic test could be *slightly* insensitive, chooses hyperparameters $(a,b)=(19,1)$
+
+Marginal posterior distributions of $r$ and $Sn$, compared to prior
+
+```{r, echo=F, fig.dim=c(3.5,2.5)}
+ans <- full.pst(60, 100, hyp=list(a=19,b=1))
+par(mfrow=c(1,2))
+hist(ans$r, prob=T, xlab="r",main="", xlim=c(0,1))
+abline(h=1,col="red")
+
+hist(ans$sn, prob=T, xlab="Sn",main="", xlim=c(0.5,1))
+tmp <- (1:200)/201
+points(tmp, dbeta(tmp,19,1), type="l",col="red")
+```
+
+# And then focus on the credible interval
+
+From bespoke code, 80\% credible interval for $r$:
+
+```{r, cache=T}
+cred.int(60,100, hyp=list(a=19,b=1))
+```
+
+For comparison, the corresponding interval if the investigator assumes $Sn=1$
+
+```{r}
+qbeta(c(0.1,0.9), shape1=1+60, shape2=1+(100-60))
+```
+
+
+
+
+
+
+# Thought (well simulation) experiment \#1A
+
+Frequentist coverage of the 80% credible interval?
+
+*At a particular spot in the parameter space.*
+
+```{r,cache=T}
+n <- 100; r.tr <- 0.7; sn.tr <- 0.85; m <- 1600
+
+ystr <- cover <- rep(NA, m)
+intrvl <- matrix(NA, m, 2)
+
+for (i in 1:m) {
+   ystr[i] <- rbinom(1, size=n, prob=r.tr*sn.tr)
+   intrvl[i,] <- cred.int(ystr[i],n, hyp=list(a=19, b=1))
+   cover[i] <- (intrvl[i,1]<r.tr) & (r.tr<intrvl[i,2])     
+}
+```
+
+# Experiment \#1A, continued
+
+```{r}
+head(cbind(r.tr, sn.tr, ystr,intrvl,cover),8)
+```
+```{r}
+### frequentist coverage
+mean(cover)
+```
+
+```{r}
+### average width
+mean(intrvl[,2]-intrvl[,1])
+```
+
+# Thought experiment \#1B
+
+Frequentist coverage of the 80% credible interval?  
+
+*At a different spot in the parameter space.*
+
+```{r, cache=T}
+n <- 100; r.tr <- 0.8; sn.tr <- 0.97; m <- 1600
+
+ystr <- cover <- rep(NA, m)
+intrvl <- matrix(NA, m, 2)
+
+for (i in 1:m) {
+   ystr[i] <- rbinom(1, size=n, prob=r.tr*sn.tr)
+   intrvl[i,] <- cred.int(ystr[i],n, hyp=list(a=19, b=1))
+   cover[i] <- (intrvl[i,1]<r.tr) & (r.tr<intrvl[i,2])     
+}
+```
+
+# Experiment \#1B, continued
+
+```{r}
+head(cbind(r.tr, sn.tr, ystr,intrvl,cover),8)
+```
+
+```{r}
+### frequentist coverage
+mean(cover)
+```
+
+```{r}
+### average length
+mean(intrvl[.2]-intrvl[,1])
+```
+
+# Thought experiment \#2A
+
+Repeated sampling of **(parameter,data) pairs**
+
+```{r, cache=T}
+n <- 100; m <- 6400
+
+r.tr <- sn.tr <- ystr <- cover <- rep(NA, m)
+intrvl <- matrix(NA, m, 2)
+
+for (i in 1:m) {
+   r.tr[i] <- runif(1)
+   sn.tr[i] <- rbeta(1, shape1=19, shape2=1)
+   
+   ystr[i] <- rbinom(1, size=n, prob=r.tr[i]*sn.tr[i])
+   intrvl[i,] <- cred.int(ystr[i],n, hyp=list(a=19, b=1))
+   cover[i] <- (intrvl[i,1]<r.tr[i]) & (r.tr[i]<intrvl[i,2])     
+}
+```
+
+# Thought experiment \#2A, continued
+
+```{r}
+head(cbind(r.tr, sn.tr, ystr,intrvl,cover),10)
+```
+
+```{r}
+mean(cover)
+```
+
+
+# Is this general?
+
+Let $A(Y^{*})$ be the credible interval
+
+Under the **generative model:**
+
+\begin{eqnarray*}
+Pr  \{\theta \in A(Y^{*})\} & = & E  \{ I_{A(Y^{*})}(\theta) \} \\
+& = &
+\end{eqnarray*}
+
+\vspace{1.5in} 
+
+# Thought experiment \#2B
+
+Repeated sampling of (parameter,data) pairs *from a different distribution.*
+
+```{r, cache=T}
+n <- 100; m <- 1600
+
+r.tr <- sn.tr <- ystr <- cover <- rep(NA, m)
+intrvl <- matrix(NA, m, 2)
+
+for (i in 1:m) {
+   r.tr[i] <- runif(1)
+   sn.tr[i] <- rbeta(1, shape1=15, shape2=5)
+   
+   ystr[i] <- rbinom(1, size=n, prob=r.tr[i]*sn.tr[i])
+   intrvl[i,] <- cred.int(ystr[i],n, hyp=list(a=19, b=1))
+   cover[i] <- (intrvl[i,1]<r.tr[i]) & (r.tr[i]<intrvl[i,2])     
+}
+```
+
+# TE \#2B, continued
+
+```{r}
+head(cbind(r.tr, sn.tr, ystr,intrvl,cover),10)
+```
+
+```{r}
+mean(cover)
+```
+
+# Frequentist coverage of the Bayesian interval revisited
+
+Same as 1A and 1B, just with more data now.
+
+
+
+# Thought Experiment \#1A\* 
+
+```{r,cache=T}
+n <- 200; r.tr <- 0.7; sn.tr <- 0.85; m <- 1600
+
+ystr <- cover <- rep(NA, m)
+intrvl <- matrix(NA, m, 2)
+
+for (i in 1:m) {
+   ystr[i] <- rbinom(1, size=n, prob=r.tr*sn.tr)
+   intrvl[i,] <- cred.int(ystr[i],n, hyp=list(a=19, b=1))
+   cover[i] <- (intrvl[i,1]<r.tr) & (r.tr<intrvl[i,2])     
+}
+```
+
+```{r}
+mean(cover)
+mean(intrvl[,2]-intrvl[,1])
+```
+
+# Thought Experiment \#1B\*
+
+```{r, cache=T}
+n <- 200; r.tr <- 0.8; sn.tr <- 0.97; m <- 1600
+
+ystr <- cover <- rep(NA, m)
+intrvl <- matrix(NA, m, 2)
+
+for (i in 1:m) {
+   ystr[i] <- rbinom(1, size=n, prob=r.tr*sn.tr)
+   intrvl[i,] <- cred.int(ystr[i],n, hyp=list(a=19, b=1))
+   cover[i] <- (intrvl[i,1]<r.tr) & (r.tr<intrvl[i,2])    
+}
+```
+
+```{r}
+mean(cover)
+mean(intrvl[,2]-intrvl[,1])
+```
+
+# In textbook problems, what do we expect?
+
+textbook = full information = fully identified
+
+*  Frequentist coverage of $x$-percent credible interval is approximately $x$, at *every* point in the parameter space.
+
+(Approximately meaning asymptotically.)
+
+(Asymptotically, Bayesian and frequentist match up.)
+
+*  Width of interval scales as $\frac{1}{\sqrt{n}}$
+
+# In problems like the one here, what happens instead (1 of 3) 
+
+*  Frequentist coverage of x-percent credible interval *varies widely* across the parameter space
+
+*  But no matter what, the average (in a certain sense) of the frequentist coverage is 
+*exactly* x.
+
+#  In problems like the one here, what happens instead (2 of 3)
+
+*  At some places in the parameter space, the frequentist coverage (of the x-percent credible interval) goes to \hspace{1.in}  as $n$ goes to infinity.
+
+*  And at all the other places, it goes to 
+
+*  And we can say something very specific about the set of parameter values for which the limiting frequentist coverage is \hspace{1.in}, namely that
+
+#  In problems like the one here, what happens instead (3 of 3)
+
+*  The width of the x-percent interval will scale like:
+
+*  This will not win you friends with your subject-area collaborators, but it is what it is.
+
+*  Check this matches up with \#1A $\rightarrow$ \#1A*, \#1B $\rightarrow$ \#1B*  
+
+
+
+
+# Musings about Bayesian coverage (1 of 4)
+ 
+Clearly having calibration in Bayesian coverage sense is not as strong as having calibration in a frequentist coverage sense
+
+In math terms, say a given interval estimation procedure applied at a given sample size has frequentist coverage $fc(\theta)$, when the parameter value is $\theta$.
+
+Frequentist x-percent confidence interval: $fc(\theta)=x$, for every $\theta$.
+
+Bayesian x-percent credible interval using prior $\pi(\theta)$? 
+
+Only full/general guarantee is that $\int fc(\theta) \Pi(\theta) d\theta = x$
+
+# Musings (2 of 4)
+
+But in many low-info problems, there **do not exist** interval estimation procedures 
+satisfying $fc(\theta)=x$. (Either for fixed $n$, or in the large $n$ limit)
+
+In such problems, the Bayesian calibration is the only game in town?
+
+\alert{Sidebar:} Considerable technical literature (mostly in econometrics) on trying to construct procedures with $fc(\theta) \geq x$, for every $\theta$.
+
+
+# Musings (3 of 4) 
+
+What's the narrative to practitioners?
+
+I choose prior $\pi$ as my pre-data ``projection'' about the state of the world (i.e., the underlying parameter values).
+
+Post-data, I will be reporting an x-percent credible interval for a (scalar) target parameter.
+
+Then with respect to my joint projection (of parameters and data), there is an x-percent chance I will cover the truth.
+
+# Musings (4 of 4)
+
+Or phrased a little differently $\ldots$
+
+I direct a lab that will, over time, study the relationship between **different** exposure, disease pairs
+
+I aspire to specify my prior distribution to correctly reflect the pair-to-pair variation in these associations.
+
+If I meet my aspiration, then, in the long-run, x percent of the x-percent credible intervals the lab reports will contain the truth.
+
+# And now that you are primed to think about operating characteristics under repeated sampling of (parameter, data) pairs ...
+
+There is a sense of best possible estimation, as well as a sense of correct coverage
+
+Let $\pi_{Nature}(\theta)$ be the distribution giving rise to the repeated sampling (along with the distribution of data $D$ given $\theta$)
+
+Amongst **any and all estimators** 
+the minimum mean-squared error (across the repeated sampling) is achieved by the posterior mean of $\psi$ when the investigator's choice of prior distribution matches that of nature.
+
+# Thoughts?
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Appendix
+
+```{r}
+show(full.pst)
+```
+
+# Appendix, continued
+
+```{r}
+show(cred.int)
+```
+
+# Appendix, continued
+
+```{r}
+show(rbeta.trnc)
+```
+
+  
+  
+
+
+  
+
+
+

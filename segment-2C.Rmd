@@ -1,0 +1,239 @@
+---
+title: |
+  | KU Leuven Summer School   
+  | Segment 2C  
+  | Missing (Perhaps?) Not at Random 
+author: Paul Gustafson
+date: September 15, 2022
+output: 
+  beamer_presentation:
+    includes:
+      in_header: header_pagenrs.tex
+---
+
+```{r, echo=F}
+### global reproducibility
+set.seed(1234)
+### sane output
+options(digits=3)
+options(width=65)
+```
+
+# Minimal Working Example
+
+```{r}
+expit <- function(z) {1/(1+exp(-z))}
+logit <- function(p) {log(p)-log(1-p)}
+
+n <- 2000
+x <- rbinom(n, size=1, prob=.4)
+y <-rbinom(n, size=1, 
+             prob=expit(cbind(1,x) %*% 
+                        c(-1, 0.2)))
+```
+
+# Creating the problem
+
+```{r}
+r <- rbinom(n, size=1,
+  prob=expit(0.1 + 0.3*x - 0.6*x*y))
+
+x.obs <- rep(NA, n); x.obs[r==1] <- x[r==1]
+dat <- data.frame(x=x.obs, y=y)
+```
+
+# MAR analysis (i)
+
+```{r}
+genmod.mar.string <- "
+model {
+  alpha ~ dnorm(0, 0.1)
+  beta0 ~ dnorm(0, 0.1)
+  beta1 ~ dnorm(0, 0.1)
+
+  for (i in 1:n) {
+    x[i] ~ dbern(pr.x)
+
+    y[i] ~ dbern(pr.y[i])
+    logit(pr.y[i]) <- beta0 + beta1*x[i]
+  }
+  logit(pr.x) <- alpha
+}"
+```
+# MAR analysis (ii)
+
+```{r, echo=F, message=F, warning=F}
+require(rjags)
+require(MCMCvis)
+```
+
+```{r, message=F, warning=F, results="hide", cache=T}
+### generative model, data go in
+mod <- jags.model(
+  textConnection(genmod.mar.string),
+  data=list(x=dat$x, y=dat$y,
+            n=dim(dat)[1]), 
+         n.chains=3)
+
+update(mod, 2000) # burn-in
+
+###  MC output comes out
+opt.mar.JAGS <- coda.samples(mod, n.iter=15000,
+  variable.names=c("alpha","beta0","beta1")) 
+```
+# MAR Analysis (iii)
+
+```{r}
+MCMCsummary(opt.mar.JAGS)
+```
+
+# Now explictly model the missingness 
+
+```{r}
+statmod.mnar.string <- "
+for (i in 1:n) {
+  x[i] ~ dbern(pr.x)
+
+  y[i] ~ dbern(pr.y[i])
+  logit(pr.y[i]) <- beta0 + beta1*x[i]
+  
+  r[i] ~ dbern(pr.r[i])
+  logit(pr.r[i]) <- gamma0 + gamma1*y[i] +
+    gamma2*x[i] + (gamma3-gamma2)*x[i]*y[i]
+}
+logit(pr.x) <- alpha"
+```
+
+# With this prior specification
+
+```{r}
+prior.mnarA.string <- "
+   alpha ~ dnorm(0, 0.1)
+   beta0 ~ dnorm(0, 0.1)
+   beta1 ~ dnorm(0, 0.1)
+  gamma0 ~ dnorm(0, 0.1)
+  gamma1 ~ dnorm(0, 0.1)
+  gamma2 ~ dnorm(0, 100)
+  gamma3 ~ dnorm(0, 100)"
+```
+
+```{r}
+genmod.mnarA.string <-  paste(
+  "model {",prior.mnarA.string, 
+  statmod.mnar.string, "}")
+```
+
+# Any pertinent remarks about our generative model?
+
+# Turn the crank
+
+```{r, message=F, warning=F, results="hide", cache=T}
+### generative model, data go in
+mod <-  jags.model(
+  textConnection(genmod.mnarA.string),
+  data=list(x=dat$x, y=dat$y,
+            r=as.vector(!is.na(dat$x)),
+            n=dim(dat)[1]),
+           n.chains=3)
+
+update(mod,2000) # burn-in
+
+###  MC output comes out
+opt.mnarA.JAGS <- coda.samples(
+  mod,
+  n.iter=15000,
+  variable.names=c("alpha","beta0","beta1",
+  "gamma0","gamma1","gamma2","gamma3")) 
+```
+# And report posterior quantities
+
+```{r}
+MCMCsummary(opt.mnarA.JAGS)
+```
+
+# And now the same with this prior specification
+
+```{r}
+prior.mnarB.string <- "
+   alpha ~ dnorm(0, 0.1)
+   beta0 ~ dnorm(0, 0.1)
+   beta1 ~ dnorm(0, 0.1)
+  gamma0 ~ dnorm(0, 0.1)
+  gamma1 ~ dnorm(0, 0.1)
+  gamma2 ~ dnorm(0, 25)
+  gamma3 ~ dnorm(0, 25)"
+```
+
+```{r}
+genmod.mnarB.string <-  paste(
+  "model {",prior.mnarB.string, 
+  statmod.mnar.string, "}")
+```
+
+# Crank
+
+```{r, message=F, warning=F, results="hide", cache=T}
+### generative model, data go in
+mod <-  jags.model(
+  textConnection(genmod.mnarB.string),
+  data=list(x=dat$x, y=dat$y,
+    r=as.vector(!is.na(dat$x)),
+    n=dim(dat)[1]),
+  n.chains=3)
+
+update(mod, 2000) # burn-in
+
+###  MC output comes out
+opt.mnarB.JAGS <- coda.samples(
+  mod,
+  n.iter=15000,
+  variable.names=c("alpha","beta0","beta1","gamma0",
+    "gamma1","gamma2","gamma3")) 
+```
+
+# Answer
+
+```{r}
+MCMCsummary(opt.mnarB.JAGS)
+```
+
+# Take a bit of stock
+
+Recall $\gamma_2$, $\gamma_{3}$ describe $\log OR(R,X|Y=y)$
+
+\begin{center}
+\begin{tabular}{ccc}
+           &               & quality of  \\
+prior SDs  & posterior SDs & numerical approximation \\
+\end{tabular}
+\end{center}
+
+\vspace{2.in}
+
+# Adjective soup
+
+\begin{center}
+\begin{tabular}{cc}
+MAR                                    & MNAR\\
+$\gamma_2=\gamma_3=0$ known   &         $\gamma_{2},\gamma_3$ unknown\\
+(and don't need to model $R$) &  \\
+\end{tabular}
+\end{center}
+
+\vspace{2.in}
+
+# Folk theorem
+
+
+# Important distinction related to folk theorem
+
+
+
+
+
+
+
+
+
+
+
