@@ -285,7 +285,7 @@ f(x_{2}|x_{1},\alpha) \;\times \\
 \begin{eqnarray*}
 f\left(\alpha,\beta,x_{2}^{(mis)} | x_{1}, x_{2}^{(obs)}, y, r\right) 
 & \propto &
-f(\alpha,\beta) f(x_{2}|x_{1}) f(y|x_{1},x_{2}) \; \times \\
+f(\alpha,\beta) f(x_{2}|x_{1},\alpha) f(y|x_{1},x_{2},\beta) \; \times \\
 & & \alert{f(r|x_{1},x_{2},y)}
 \end{eqnarray*}
 
