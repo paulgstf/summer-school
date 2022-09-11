@@ -89,7 +89,7 @@ $f(\mbox{params})$
 $\prod_{i=1}^{n}$
 ${\color{gray}f(y_i)}$
 $f(x_i|y_i)$
-$f(x^{*}_1, x^{*}_2|x_i,{\color{gray}y_i})$
+$f(x^{*}_{1,i}, x^{*}_{2,i}|x_i,{\color{gray}y_i})$
 
 \vspace{2.in}
 
@@ -144,6 +144,8 @@ dat.1 ~ dmulti(q.1[], n.1)
 ```
 
 # Pause: what's going on here?
+
+# Pause, continued
 
 # Turn the crank
 
