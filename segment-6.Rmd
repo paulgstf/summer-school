@@ -223,7 +223,7 @@ mean(cover)
 
 ```{r}
 ### average length
-mean(intrvl[.2]-intrvl[,1])
+mean(intrvl[,2]-intrvl[,1])
 ```
 
 # Thought experiment \#2A
@@ -379,7 +379,7 @@ textbook = full information = fully identified
 
 *  This will not win you friends with your subject-area collaborators, but it is what it is.
 
-*  Check this matches up with \#1A $\rightarrow$ \#1A*, \#1B $\rightarrow$ \#1B*  
+*  Check this matches up with \#1A $\rightarrow$ \#1A\*, \#1B $\rightarrow$ \#1B\*  
 
 
 
