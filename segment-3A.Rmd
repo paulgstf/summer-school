@@ -114,10 +114,11 @@ $f(x^{*}_i|x_i,{\color{gray}y_i},Sn,Sp)$
 
 \vspace{3.in}
 
-## Pause: Missing at Random assumption here?  Interpretation?
+# Pause: Missing at Random assumption here?  Interpretation?
 
 
-##
+# Code-up the generative model
+
 ```{r}
 genmod.string <- "model{
   
@@ -145,7 +146,7 @@ require(rjags)
 require(MCMCvis)
 ```
 
-#
+# Turn the crank
 
 ```{r, message=F, warning=F, results="hide", cache=T}
 
@@ -170,13 +171,13 @@ MCMCsummary(opt.JAGS)
 
 # Computationally frustrating (ess / wall-time) - Collapse?
 
-E.g., for the validated controls:
+E.g., for the unvalidated controls:
 
-\vspace{2.in}
+\vspace{2.5in}
 
-And for the unvalidated controls:
 
-#
+
+# Code this up
 
 ```{r}
 genmod.clps.string <- "model{
@@ -204,7 +205,7 @@ genmod.clps.string <- "model{
 }"
 ```
 
-#
+# Turn the crank
 
 ```{r, message=F, warning=F, results="hide", cache=T}
 
@@ -225,7 +226,7 @@ opt.clps.JAGS <- coda.samples(mod.clps, n.iter=10000, thin=1,
   variable.names=c("gamma.0","gamma.1","sens","spec","trgt")) 
 ```
 
-#
+# Get an answer
 
 ```{r}
 MCMCsummary(opt.clps.JAGS)
