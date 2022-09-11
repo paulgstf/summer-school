@@ -151,10 +151,7 @@ MCMCtrace(opt1.JAGS, params=c("beta3","sig.y"), pdf=F)
 
 # Thoughts: Hall-pass that freed me from having a model for $X_1$?
 
-Or did I have a "hall pass" to cheat a little?
-
-Under the hood JAGS produced Monte Carlo draws 
-from joint?   What about from marginal instead?
+# More space for thoughts?
 
 # Thoughts: In concept at least could I have done the computing in the "collapsed" frame of reference?
 
