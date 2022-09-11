@@ -1,0 +1,210 @@
+---
+title: |
+  | KU Leuven Summer School   
+  | Segment 5A   
+  | Preferential Sampling and Inferring COVID Lethality 
+author: Paul Gustafson
+date: September 16, 2022
+output: 
+  beamer_presentation
+---
+
+  
+
+
+```{r, echo=F}
+### global reproducibility
+set.seed(1234)
+### sane output
+options(digits=3)
+options(width=65)
+```
+
+# A second "latent variable model in covid times" tale
+
+```{r, out.width = "240px", fig.align="center", echo=F}
+knitr::include_graphics("FIGS/AOAScover.pdf")
+```
+
+(see journal website $\rightarrow$ supplementary material for code/data)
+
+# The story begins here
+
+In a given (the $k$-th) time/place, there are $P_k$ people.  Of these:
+
+*  $C_{k}$ get infected by covid
+
+    + and of these $D_{k}$ die from the infection
+
+*  $T_{k}$ get tested for covid
+
+    + and of these $CC_{k}$ test positive
+
+**Observable:** $(P_k,D_k,T_k,CC_k)$. 
+(E.g. [ourworldindata.org](https://ourworldindata.org) for country-level)   
+
+**Latent:** $C_k$.
+
+Can report case fatality rate, $CFR_k = D_k/CC_k$.
+
+Want to report infection fatality rate $IFR_k = D_k/C_k$?
+
+
+#   What if testing were done on the basis of random sampling?
+
+E.g., The $T_k$ tested individuals were purely drawn at random from the $P_k$ population members.
+
+Then $\hat{C}_k = (CC_k/T_k) P_k$, hence $\hat{IFR}_k = (D_k/P_k)  / (CC_k/T_k)$.
+
+Helpful to think about this for two reasons:
+
+* An anchor - can think about how this $\hat{IFR}_k$ breaks as the process of "who gets tested" deviates from random sampling.
+
+* Then in some instances, testing a random subset of the population did/does happen: "sero-surveys."
+
+
+# Testing of a biased sample
+
+Think of infection rate $IR_k = C_k/P_k$ and infection fatality rate $IFR_k = D_k/C_k$ as parameters.
+
+Generalize from random sampling, $CC_k \sim \mbox{Bin}(T_k, IR_k)$ to biased sampling:
+
+$$CC_k \sim \mbox{Bin}(T_k, 1-(1-IR_k)^{\phi_k})$$
+
+where $\phi_{k} > 1$ describes the bias.
+
+Interpretation?    $OR(\mbox{get tested}, \mbox{are infected}) \approx \phi_{k}$
+
+# Take stock
+
+Have parameters $(IR_k, IFR_k, \phi_k)$
+
+Convenient to **collapse:** From $C_k \sim \mbox{Bin}(P_k, IR_k)$ and $(D_k | C_k) \sim \mbox{Bin}(C_k, IFR_k)$ down to:
+
+*  $D_k \sim \mbox{Bin} (P_k, (IR_k)(IFR_k))$
+
+Along with (from prev. slide): 
+
+*  $CC_k \sim \mbox{Bin}(T_k, 1-(1-IR_k)^{\phi_k})$
+
+#  And then recall we are aiming to draw together information from multiple jurisdictions
+
+\begin{eqnarray*}
+f(IR_{1:K}, IFR_{1:K}, \phi_{1:K} | P_{1:K}, T_{1:K},CC_{1:K}, D_{1:K}) \;\; \propto 
+\end{eqnarray*}
+
+\begin{eqnarray*}
+f(IR_{1:K}, IFR_{1:K}, \phi_{1:K}) \;\; \times\\
+\prod_{k=1}^{K}
+f(CC_k| T_k, IR_k, \phi_k)
+f(D_k | P_k, IR_k, IFR_k)
+\end{eqnarray*}
+
+# Prior distributions (1 of 3): sigh - so much devil in detail
+
+Meta-analysis / random effect idea, e.g.,
+
+$g(IR_{1}),\ldots, g(IR_{K}) \sim N(\beta, \sigma^{2})$, $(\beta,\sigma^{2}) \sim \mbox{prior}$
+
+$g(IFR_{1}),\ldots, g(IFR_{K}) \sim N(\theta, \tau^{2})$, $(\theta, \tau^2) \sim \mbox{prior}$
+
+*  Science: cross-jurisdiction variation in IFR much less than in IR.
+
+*  So prior that concentrates $\tau$ near zero justified 
+
+*   In fact, perhaps with addition of covariates, unexplained IFR variation could be *very* low?  Getting toward a ``biological constant''?
+
+*  Interpret $g^{-1}(\theta)$ as target parameter, "typical" IFR.
+
+# Prior distributions (2 of 3): refining the previous slide a tad
+
+\begin{eqnarray*}
+g(IR_{i}) & \sim & N(\beta_0 + \beta_1 x_{1i} + \beta_2 x_{2i} + \beta_3 x_{3i}, \sigma^{2})
+\end{eqnarray*}
+
+\begin{eqnarray*}
+g(IFR_{i}) & \sim & N(\theta_0 + \theta_1 z_{1i} + \theta_2 z_{2i}, \tau^{2})
+\end{eqnarray*}
+
+All country-specific covariates centred.
+
+So can interpret $g^{-1}(\theta_0)$ as the typical IFR amongst typical jurisdictions.
+
+# Prior distributions (3 of 3)
+
+Recall that larger $\phi_{k}$ corresponds to more targeted testing (compared to 
+testing a random subset, $\phi_{k}=1$).
+
+*  Countries contributing $(P_k,CC_k,T_k, D_k)$: 
+    +  $\phi_{k} \sim \mbox{Unif}(1,1+\gamma)$, $\gamma \sim \mbox{prior}$.
+
+* Sero-surveys contributing $(P_k,CC_k,T_k, D_k)$: 
+    +  $\phi_{k} \equiv 1$.
+
+
+
+# Trying to keep score - Need JAGS (or comparable) to encode/compute:
+
+\begin{eqnarray*}
+f(\gamma, \beta, \sigma^{2}, \gamma, \tau^{2}, \{\phi,IR,IFR\}_{1:K} |  \{P,T,CC,D\}_{1:K}) \;\; \propto 
+\end{eqnarray*}
+
+\begin{eqnarray*}
+f(\gamma)f(\beta)f(\sigma^{2})f(\gamma)f(\tau^{2}) \times \\
+\prod_{k=1}^{K} f(IR_{k}| X_{k}, \beta, \sigma^{2}) \times \\
+\prod_{k=1}^{K} f(IFR_{k}|Z_{k}, \theta, \tau^{2}) \times \\
+\prod_{k=1}^{K} f(\phi_{k}| \gamma) \times \\
+\prod_{k=1}^{K} f(cc_{k}|IR_k,\phi_k, T_k) f(d_{k}|IR_k, IFR_k, P_k) 
+\end{eqnarray*}
+
+
+
+
+
+
+
+
+
+
+
+
+# Inference: (head of Fig. 3)
+
+```{r, out.width = "300px", fig.align="center", echo=F}
+knitr::include_graphics("FIGS/ifr_fig2.pdf")
+```
+
+# Inference: (tail of Fig. 3)
+
+```{r, out.width = "300px", fig.align="center", echo=F}
+knitr::include_graphics("FIGS/ifr_fig3.pdf")
+```
+
+
+
+
+
+
+
+
+# Second-order issue
+
+We had some high-info datapoints ($\phi_{k}=1$ known, sero-surveys), 
+and some lower-info datapoints ($\phi_{k} \sim \mbox{prior}$, national statistics), 
+drew them all together in a meta-analysis.
+
+Would it be useless to try to proceed in these sorts of problems with only lower-info data points?
+
+# Appendix: A meta-analysis "life hack"
+
+For the sero-surveys, really helps to organize our thinking that a random sample of size $T_k$ produced 
+$CC_k$ confirmed cases (and $T_k-CC_k$ non-cases).
+
+In actuality, the better surveys did something along the lines of:
+
+\vspace{1.5in}
+
+So in fact we take the data to be the effective $T_k$ and $CC_k$ that would produce this 95% credible interval *assuming* random sampling.
+
+
+
